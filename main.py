@@ -4,6 +4,8 @@ from PIL import Image
 import os
 from configparser import ConfigParser
 from moviepy.editor import VideoFileClip
+import glob
+import hashlib
 import tempfile
 
 # read the configuration file
@@ -51,11 +53,22 @@ for sticker_pack_name in pack_names:
         print(f'Got non-200 status code for {sticker_pack_name}')
         continue
 
+    existing_files = {}
+    for exist in glob.glob(os.path.join(output_dir, '*')):
+        if not os.path.isfile(exist):
+            continue
+        with open(exist, 'rb') as f:
+            h = hashlib.sha256()
+            h.update(f.read())
+            if h.hexdigest() not in existing_files:
+                existing_files[h.hexdigest()] = []
+            existing_files[h.hexdigest()].append(exist)
+
     # parse the response to get the list of stickers
     stickers = response.json()['result']['stickers']
 
     # loop through each sticker and convert it
-    print(f'Converting {len(stickers)} stickers...')
+    print(f'Converting {sticker_pack_name} {len(stickers)} stickers...')
     for i, sticker in enumerate(stickers):
         # download the image
         file_id = sticker['file_id']
@@ -95,7 +108,24 @@ for sticker_pack_name in pack_names:
             # convert the image to the desired formats
             for format in output_formats:
                 output_path = os.path.join(output_dir, f'{i+1}_{sticker["emoji"]}_{sticker["file_unique_id"]}.{format}')
-                print(f'Converting {sticker["file_unique_id"]} to {format}...')
+                print(f'Converting {sticker_pack_name}/{i} {sticker["emoji"]} ({sticker["file_unique_id"]}) to {format}...')
                 image.save(output_path, format=format)
+
+                # see if it's a duplicate
+                with open(output_path, 'rb') as f:
+                    h = hashlib.sha256()
+                    h.update(f.read())
+                    digest = h.hexdigest()
+                # delete duplicates (have 2 or more of same file)
+                if digest not in existing_files:
+                    existing_files[digest] = []
+                if output_path not in existing_files[digest]:
+                    existing_files[digest].append(output_path)
+                
+                for extra in existing_files[digest]:
+                    if extra != output_path:
+                        os.unlink(extra)
+                        print(f'... found a duplicate: {extra}, deleting...')
+
 
     print('Conversion complete!')
